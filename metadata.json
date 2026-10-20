@@ -1,0 +1,6 @@
+{
+  "name": "Telegram Matchmaking Bot Architecture & Simulator",
+  "description": "Production-ready Telegram Matchmaking Bot architecture with grammY, Drizzle ORM, PostgreSQL schema, Redis store, and interactive onboarding flow simulator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
