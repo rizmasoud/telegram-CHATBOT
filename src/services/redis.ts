@@ -1,5 +1,3 @@
-import Redis from 'ioredis';
-
 export interface QueueEntry {
   userId: number;
   telegramId: string;
@@ -22,42 +20,25 @@ export interface PairingResult {
   sessionId: string;
 }
 
-class RedisService {
-  private client: Redis | null = null;
-  private isConnected = false;
-
-  // In-memory fallback and concurrency mutex
+/**
+ * High-performance, zero-dependency In-Memory Matchmaking, Rate Limiter & Session Store.
+ * Replaces external Redis dependency for simplified deployment, eliminating connection issues,
+ * latency, and external service requirements for 100-300+ active users.
+ */
+class InMemoryMatchmakingService {
+  // In-memory queues & session state
   private memoryQueue: Map<number, QueueEntry> = new Map();
   private activeChats: Map<number, number> = new Map(); // userId -> partnerUserId
   private activeSessions: Map<number, string> = new Map(); // userId -> sessionId
   private rateLimits: Map<string, number> = new Map();
   private userStatuses: Map<number, 'idle' | 'searching' | 'in_chat'> = new Map();
   private isPairingLocked = false;
+  private bannedUsers: Set<number> = new Set();
+  private messageTimestamps: Map<string, number[]> = new Map(); // key -> timestamps[]
+  private searchTimestamps: Map<string, number> = new Map(); // key -> lastSearchTs
+  private chatMessageBuffers: Map<string, { sender: string; text: string; ts: number }[]> = new Map();
 
   constructor() {
-    if (process.env.REDIS_URL) {
-      try {
-        this.client = new Redis(process.env.REDIS_URL, {
-          lazyConnect: true,
-          maxRetriesPerRequest: 1,
-          retryStrategy: () => null, // non-blocking fallback if local redis is absent
-        });
-
-        this.client
-          .connect()
-          .then(() => {
-            this.isConnected = true;
-            console.log('[Redis] Connected to Redis instance for matchmaking queues');
-          })
-          .catch((err) => {
-            console.warn('[Redis] Connection failed, using fallback in-memory store:', err.message);
-            this.client = null;
-          });
-      } catch (err) {
-        console.warn('[Redis] Init error, fallback in-memory engine active');
-      }
-    }
-
     // Auto-expire / purge stale in-memory buffers every 2 minutes to prevent memory leaks
     if (typeof setInterval !== 'undefined') {
       const timer = setInterval(() => {
@@ -72,16 +53,7 @@ class RedisService {
   /**
    * Concurrency Lock: Prevents race conditions during matching evaluation
    */
-  private async acquireLock(lockKey = 'lock:matchmaking', ttlMs = 2000): Promise<boolean> {
-    if (this.client && this.isConnected) {
-      try {
-        const result = await this.client.set(lockKey, 'locked', 'PX', ttlMs, 'NX');
-        return result === 'OK';
-      } catch (e) {
-        // Fall back to memory lock
-      }
-    }
-
+  private async acquireLock(_lockKey = 'lock:matchmaking', ttlMs = 2000): Promise<boolean> {
     if (this.isPairingLocked) return false;
     this.isPairingLocked = true;
     setTimeout(() => {
@@ -90,35 +62,16 @@ class RedisService {
     return true;
   }
 
-  private async releaseLock(lockKey = 'lock:matchmaking'): Promise<void> {
-    if (this.client && this.isConnected) {
-      try {
-        await this.client.del(lockKey);
-      } catch (e) {
-        // Ignore
-      }
-    }
+  private releaseLock(_lockKey = 'lock:matchmaking'): void {
     this.isPairingLocked = false;
   }
 
   /**
-   * Enqueue user into the Redis waiting pool
+   * Enqueue user into the waiting pool
    */
   async addToMatchQueue(entry: QueueEntry): Promise<void> {
     this.userStatuses.set(entry.userId, 'searching');
     this.memoryQueue.set(entry.userId, entry);
-
-    if (this.client && this.isConnected) {
-      try {
-        const pipeline = this.client.pipeline();
-        pipeline.sadd('pool:waiting_users', entry.userId.toString());
-        pipeline.set(`pool:user_meta:${entry.userId}`, JSON.stringify(entry));
-        pipeline.set(`user:status:${entry.userId}`, 'searching');
-        await pipeline.exec();
-      } catch (err) {
-        console.warn('[Redis] addToMatchQueue error:', err);
-      }
-    }
   }
 
   /**
@@ -128,19 +81,6 @@ class RedisService {
     const existed = this.memoryQueue.has(userId);
     this.memoryQueue.delete(userId);
     this.userStatuses.set(userId, 'idle');
-
-    if (this.client && this.isConnected) {
-      try {
-        const pipeline = this.client.pipeline();
-        pipeline.srem('pool:waiting_users', userId.toString());
-        pipeline.del(`pool:user_meta:${userId}`);
-        pipeline.set(`user:status:${userId}`, 'idle');
-        await pipeline.exec();
-      } catch (err) {
-        console.warn('[Redis] removeFromMatchQueue error:', err);
-      }
-    }
-
     return existed;
   }
 
@@ -220,35 +160,12 @@ class RedisService {
         this.userStatuses.set(currentUser.userId, 'in_chat');
         this.userStatuses.set(candidate.userId, 'in_chat');
 
-        // Persist pairing in Redis if available
-        if (this.client && this.isConnected) {
-          try {
-            const pipeline = this.client.pipeline();
-            pipeline.srem('pool:waiting_users', currentUser.userId.toString());
-            pipeline.srem('pool:waiting_users', candidate.userId.toString());
-            pipeline.del(`pool:user_meta:${currentUser.userId}`);
-            pipeline.del(`pool:user_meta:${candidate.userId}`);
-
-            pipeline.set(`chat:partner:${currentUser.userId}`, candidate.userId.toString());
-            pipeline.set(`chat:partner:${candidate.userId}`, currentUser.userId.toString());
-
-            pipeline.set(`chat:session:${currentUser.userId}`, sessionId);
-            pipeline.set(`chat:session:${candidate.userId}`, sessionId);
-
-            pipeline.set(`user:status:${currentUser.userId}`, 'in_chat');
-            pipeline.set(`user:status:${candidate.userId}`, 'in_chat');
-            await pipeline.exec();
-          } catch (err) {
-            console.warn('[Redis] Error persisting chat session:', err);
-          }
-        }
-
         return { partner: candidate, sessionId };
       }
 
       return null;
     } finally {
-      await this.releaseLock('lock:match_pairing');
+      this.releaseLock('lock:match_pairing');
     }
   }
 
@@ -282,32 +199,12 @@ class RedisService {
 
       this.userStatuses.set(userId, 'idle');
       this.userStatuses.set(partnerId, 'idle');
-
-      if (this.client && this.isConnected) {
-        try {
-          const pipeline = this.client.pipeline();
-          pipeline.del(`chat:partner:${userId}`);
-          pipeline.del(`chat:partner:${partnerId}`);
-          pipeline.del(`chat:session:${userId}`);
-          pipeline.del(`chat:session:${partnerId}`);
-          pipeline.set(`user:status:${userId}`, 'idle');
-          pipeline.set(`user:status:${partnerId}`, 'idle');
-          pipeline.exec();
-        } catch (err) {
-          // Ignore
-        }
-      }
     } else {
       this.userStatuses.set(userId, 'idle');
     }
 
     return { partnerId, sessionId };
   }
-
-  private bannedUsers: Set<number> = new Set();
-  private messageTimestamps: Map<string, number[]> = new Map(); // key -> timestamps[]
-  private searchTimestamps: Map<string, number> = new Map(); // key -> lastSearchTs
-  private chatMessageBuffers: Map<string, { sender: string; text: string; ts: number }[]> = new Map();
 
   getUserStatus(userId: number): 'idle' | 'searching' | 'in_chat' | 'banned' {
     if (this.bannedUsers.has(userId)) return 'banned';
@@ -321,15 +218,6 @@ class RedisService {
       this.bannedUsers.delete(userId);
     }
     this.userStatuses.set(userId, status as any);
-
-    if (this.client && this.isConnected) {
-      this.client.set(`user:status:${userId}`, status).catch(() => {});
-      if (status === 'banned') {
-        this.client.sadd('set:banned_users', userId.toString()).catch(() => {});
-      } else {
-        this.client.srem('set:banned_users', userId.toString()).catch(() => {});
-      }
-    }
   }
 
   isUserBanned(userId: number): boolean {
@@ -337,7 +225,7 @@ class RedisService {
   }
 
   /**
-   * Message Rate Limiter: Max 5 messages per 3 seconds (sliding window)
+   * Message Rate Limiter: Max 5 messages per 3 seconds (sliding window in memory)
    */
   checkMessageRateLimit(
     identifier: string | number,
@@ -361,17 +249,6 @@ class RedisService {
     timestamps.push(now);
     this.messageTimestamps.set(key, timestamps);
 
-    if (this.client && this.isConnected) {
-      // In Redis: sliding window using zset or simple expire
-      this.client
-        .pipeline()
-        .zremrangebyscore(key, 0, now - windowMs)
-        .zadd(key, now, `${now}-${Math.random()}`)
-        .pexpire(key, windowMs)
-        .exec()
-        .catch(() => {});
-    }
-
     return { allowed: true, retryAfterMs: 0, count: timestamps.length };
   }
 
@@ -393,10 +270,6 @@ class RedisService {
     }
 
     this.searchTimestamps.set(key, now);
-    if (this.client && this.isConnected) {
-      this.client.set(key, now.toString(), 'PX', minIntervalMs).catch(() => {});
-    }
-
     return { allowed: true, retryAfterMs: 0 };
   }
 
@@ -484,7 +357,8 @@ class RedisService {
 
   getQueueStats() {
     return {
-      connectedToRealRedis: this.isConnected,
+      connectedToRealRedis: false,
+      storageType: 'In-Memory (High-Performance Map & Set Store)',
       queueSize: this.memoryQueue.size,
       activeChatsCount: this.activeChats.size / 2,
       bannedUsersCount: this.bannedUsers.size,
@@ -506,5 +380,6 @@ class RedisService {
   }
 }
 
-export const redisService = new RedisService();
-
+export const matchmakingService = new InMemoryMatchmakingService();
+// Export as redisService as well for drop-in backward compatibility with existing handlers
+export const redisService = matchmakingService;

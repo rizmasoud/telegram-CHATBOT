@@ -483,3 +483,63 @@ export function createMatchmakingBot(token?: string): Bot<BotContext> {
 }
 
 export const botInstance = createMatchmakingBot();
+
+/**
+ * Starts real Telegram Long Polling (bot.start())
+ * Runs concurrently with the web server to listen for real Telegram messages & commands.
+ */
+export async function startBotLongPolling(bot: Bot<BotContext> = botInstance) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const isConfigured = Boolean(
+    token &&
+    token.trim() !== '' &&
+    !token.includes('ABCdefGhIJKlmNoPQRsTUVwxyZ') &&
+    token.includes(':')
+  );
+
+  if (!isConfigured) {
+    console.log('[Telegram Bot] ℹ️ Live Telegram Token not provided or using default placeholder.');
+    console.log('[Telegram Bot] ℹ️ Set TELEGRAM_BOT_TOKEN="your_token" in .env to connect to live Telegram servers.');
+    return;
+  }
+
+  try {
+    console.log('[Telegram Bot] 🔄 Initializing real Telegram connection via Long Polling (bot.start())...');
+
+    // 1. Remove any active webhook so Telegram allows getUpdates (Long Polling)
+    try {
+      await bot.api.deleteWebhook({ drop_pending_updates: false });
+    } catch (e: any) {
+      console.warn('[Telegram Bot] Notice during deleteWebhook check:', e?.message || e);
+    }
+
+    // 2. Start grammY Long Polling concurrently
+    bot
+      .start({
+        onStart: (botInfo) => {
+          console.log('[Telegram Bot] ==============================================');
+          console.log(`[Telegram Bot] 🚀 Live Long Polling Started Successfully!`);
+          console.log(`[Telegram Bot] 🤖 Bot Name: ${botInfo.first_name}`);
+          console.log(`[Telegram Bot] 👤 Username: @${botInfo.username} (ID: ${botInfo.id})`);
+          console.log(`[Telegram Bot] 📡 Listening for incoming messages, commands & match requests!`);
+          console.log('[Telegram Bot] ==============================================');
+        },
+        drop_pending_updates: true,
+      })
+      .catch((err: any) => {
+        console.error('[Telegram Bot] ❌ Long Polling Error:', err?.message || err);
+      });
+
+    // 3. Register graceful shutdown handlers
+    process.once('SIGINT', () => {
+      console.log('[Telegram Bot] Stopping polling loop (SIGINT)...');
+      bot.stop();
+    });
+    process.once('SIGTERM', () => {
+      console.log('[Telegram Bot] Stopping polling loop (SIGTERM)...');
+      bot.stop();
+    });
+  } catch (err: any) {
+    console.error('[Telegram Bot] ❌ Failed to start Long Polling:', err?.message || err);
+  }
+}

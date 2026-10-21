@@ -45,9 +45,9 @@ export const ArchitectureView: React.FC = () => {
             <Layers className="w-4 h-4" />
             <h4 className="font-semibold text-xs tracking-wide uppercase">In-Memory Engine</h4>
           </div>
-          <div className="text-lg font-bold text-slate-100">Redis (ioredis)</div>
+          <div className="text-lg font-bold text-slate-100">In-Memory Engine</div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Sub-millisecond sorted-set matchmaking queues, active chat pairings, and rate-limiting.
+            Sub-millisecond Map/Set matchmaking queues, active chat pairings, and sliding-window rate-limiting.
           </p>
         </div>
       </div>
@@ -87,7 +87,7 @@ export const ArchitectureView: React.FC = () => {
             </div>
             <ul className="text-slate-400 space-y-1 text-[11px]">
               <li>• <code>@grammyjs/conversations</code></li>
-              <li>• In-memory/Redis Session</li>
+              <li>• In-memory Session Store</li>
               <li>• Command & Callback Routers</li>
               <li>• Deep-link Referral Parser</li>
             </ul>
@@ -116,7 +116,7 @@ export const ArchitectureView: React.FC = () => {
             <ul className="text-slate-400 space-y-1 text-[11px]">
               <li>• PostgreSQL (Drizzle ORM)</li>
               <li>• Users & Preferences 1:1</li>
-              <li>• Redis Match Queues</li>
+              <li>• In-Memory Match Queues</li>
               <li>• Active Chat Peer Map</li>
             </ul>
           </div>
@@ -263,12 +263,12 @@ export const ArchitectureView: React.FC = () => {
         </div>
       </div>
 
-      {/* Advanced Matchmaking & Redis Queue Architecture */}
+      {/* Advanced Matchmaking & In-Memory Queue Architecture */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-400" />
-            Redis Matchmaking Engine & Concurrency Safety
+            In-Memory Matchmaking Engine & Concurrency Safety
           </h3>
           <span className="text-[10px] bg-amber-950 text-amber-300 border border-amber-800/80 px-2 py-0.5 rounded-full font-mono">
             Sub-millisecond Mutex
@@ -301,13 +301,13 @@ export const ArchitectureView: React.FC = () => {
             </h4>
             <ul className="text-slate-400 space-y-1.5 text-[11px]">
               <li>
-                • <b>Distributed Mutex Lock:</b> Acquired with Redis <code>SET lock:match_pairing PX 1500 NX</code> before candidate inspection.
+                • <b>High-Speed Mutex Lock:</b> Acquired with memory lock before candidate inspection.
               </li>
               <li>
-                • <b>Atomic Pipeline Claim:</b> Removes both users from <code>pool:waiting_users</code> and creates <code>chat:partner</code> mapping in one single Redis transaction.
+                • <b>Atomic Claim:</b> Removes both users from queue and creates active chat session mapping in one tick.
               </li>
               <li>
-                • <b>Zero Double-Matching:</b> Guaranteed safe even under high concurrent traffic.
+                • <b>Zero Double-Matching:</b> Guaranteed safe even under concurrent user requests.
               </li>
             </ul>
           </div>
@@ -339,18 +339,18 @@ export const ArchitectureView: React.FC = () => {
         <div className="bg-slate-950/80 border border-slate-800 p-3.5 rounded-xl space-y-3 text-xs">
           <h4 className="font-semibold text-slate-200 text-xs flex items-center gap-2 text-rose-400">
             <Shield className="w-4 h-4 text-rose-400" />
-            Moderation, Auto-Ban & Redis Rate Limiting Engine
+            Moderation, Auto-Ban & Rate Limiting Engine
           </h4>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-400">
             <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/70 space-y-1.5">
               <span className="font-bold text-slate-200 font-mono text-rose-300">🛡️ Auto-Ban Threshold</span>
               <p>
-                When a user receives &ge; 3 unique reports within 24 hours, the system automatically marks them as <code>banned</code> in PostgreSQL and updates the Redis blacklist set.
+                When a user receives &ge; 3 unique reports within 24 hours, the system automatically marks them as <code>banned</code> in PostgreSQL and updates the blacklist set.
               </p>
             </div>
             <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800/70 space-y-1.5">
-              <span className="font-bold text-slate-200 font-mono text-amber-300">⚡ Redis Sliding Rate Limiter</span>
+              <span className="font-bold text-slate-200 font-mono text-amber-300">⚡ In-Memory Sliding Rate Limiter</span>
               <p>
                 Prevents spam flooding: maximum <b>5 messages per 3 seconds</b> and <b>1 search per 5 seconds</b>. Throttles offending requests with friendly Persian cooldown warnings.
               </p>

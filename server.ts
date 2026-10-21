@@ -1,7 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
-import { botInstance } from './src/bot/bot';
+import { botInstance, startBotLongPolling } from './src/bot/bot';
 import { inMemoryDb } from './src/db';
 import { redisService } from './src/services/redis';
 import { simulatorService } from './src/services/simulatorService';
@@ -44,10 +44,17 @@ app.get('/api/status', (req, res) => {
       totalUsers: dbStats.totalUsers,
       activeChats: dbStats.activeChats,
     },
-    redis: {
-      connected: queueStats.connectedToRealRedis,
-      inMemoryFallback: !queueStats.connectedToRealRedis,
+    storage: {
+      type: 'In-Memory Matchmaking & Rate Limiter',
+      status: 'active',
       queueSize: queueStats.queueSize,
+    },
+    bot: {
+      mode: 'Long Polling (bot.start())',
+      configured: Boolean(
+        process.env.TELEGRAM_BOT_TOKEN &&
+        !process.env.TELEGRAM_BOT_TOKEN.includes('ABCdefGhIJKlmNoPQRsTUVwxyZ')
+      ),
     },
     botConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
   });
@@ -237,6 +244,10 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Telegram Matchmaking backend & UI running on http://0.0.0.0:${PORT}`);
+    // Start real Telegram Long Polling concurrently (bot.start())
+    startBotLongPolling().catch((err) => {
+      console.error('[Bot Startup Error]', err);
+    });
   });
 }
 

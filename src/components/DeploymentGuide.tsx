@@ -26,19 +26,8 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  redis:
-    image: redis:7-alpine
-    container_name: matchmaking_redis
-    restart: always
-    command: redis-server --appendonly yes --requirepass redis_secure_password
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-
 volumes:
   pgdata:
-  redisdata:
 `;
 
   const webhookSetup = `import { botInstance } from './src/bot/bot';
@@ -64,7 +53,7 @@ console.log('Telegram Webhook registered successfully!');
           Production Deployment & Infrastructure Guide
         </h3>
         <p className="text-xs text-slate-400 leading-relaxed">
-          This architecture is architected for high-concurrency Telegram bot traffic with zero dropped updates. Follow these steps to deploy to production with PostgreSQL, Drizzle ORM, and Redis.
+          This architecture is designed for responsive Telegram bot matchmaking with zero dropped updates. Follow these steps to deploy to production with PostgreSQL and Drizzle ORM (with self-contained in-memory queuing).
         </p>
       </div>
 

@@ -91,7 +91,7 @@ export const LiveDatabaseView: React.FC<LiveDatabaseViewProps> = ({ onRefreshTri
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Database className="w-5 h-5 text-cyan-400" />
-          <h3 className="font-bold text-sm text-slate-100">Live PostgreSQL & Redis State</h3>
+          <h3 className="font-bold text-sm text-slate-100">Live PostgreSQL & In-Memory State</h3>
         </div>
 
         <div className="flex items-center gap-2">
@@ -122,7 +122,7 @@ export const LiveDatabaseView: React.FC<LiveDatabaseViewProps> = ({ onRefreshTri
         <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-xl">
           <div className="text-[10px] text-slate-400 uppercase font-mono">Queue Searches</div>
           <div className="text-lg font-bold text-amber-400 mt-0.5">{queueStats?.queueSize ?? 0}</div>
-          <div className="text-[10px] text-amber-500/80 font-mono mt-0.5">Redis ZSET</div>
+          <div className="text-[10px] text-amber-500/80 font-mono mt-0.5">In-Memory Map</div>
         </div>
         <div className="bg-slate-900/90 border border-slate-800 p-3 rounded-xl">
           <div className="text-[10px] text-slate-400 uppercase font-mono">Active Chats</div>
@@ -250,13 +250,13 @@ export const LiveDatabaseView: React.FC<LiveDatabaseViewProps> = ({ onRefreshTri
         </div>
       </div>
 
-      {/* Redis Matchmaking Queue Widget */}
+      {/* In-Memory Matchmaking Queue Widget */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-md">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-amber-400" />
             <h4 className="font-semibold text-xs text-slate-200 uppercase tracking-wider font-mono">
-              Redis Matchmaking Queue (Sorted Set)
+              In-Memory Matchmaking Queue (Fast Map/Set Store)
             </h4>
           </div>
           <span className="text-[11px] font-mono text-amber-400 bg-amber-950/60 border border-amber-800/80 px-2 py-0.5 rounded-full">

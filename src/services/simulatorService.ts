@@ -1383,7 +1383,7 @@ class SimulatorService {
       `• آقایان: <b>${maleCount}</b> | بانوان: <b>${femaleCount}</b>`,
       `• مسدود شده: <b>${stats.bannedUsersCount}</b>`,
       ``,
-      `⚡ <b>صف و پردازش همسان‌گزینی (Redis):</b>`,
+      `⚡ <b>صف و پردازش همسان‌گزینی:</b>`,
       `• افراد حاضر در صف: <b>${queueStats.queueSize}</b>`,
       `• چت‌های همزمان فعال: <b>${stats.activeChats}</b>`,
       ``,
