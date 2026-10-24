@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 /**
  * Domain Types for Telegram Matchmaking Bot
  */
@@ -89,26 +91,7 @@ export interface SessionData {
   adminActionStep?: 'broadcast' | null;
 }
 
-export interface BotInlineButton {
-  text: string;
-  callback_data?: string;
-  url?: string;
-}
-
-export interface BotMessagePayload {
-  id: string;
-  from: 'bot' | 'user';
-  text: string;
-  photoUrl?: string;
-  replyMarkup?: {
-    inline_keyboard?: BotInlineButton[][];
-  };
-  timestamp: string;
-}
-
-export const ADMIN_TELEGRAM_IDS: string[] = (
-  process.env.ADMIN_TELEGRAM_IDS || '100000001,999999999'
-)
+export const ADMIN_TELEGRAM_IDS: string[] = (process.env.ADMIN_TELEGRAM_IDS || '')
   .split(',')
-  .map((s) => s.trim());
-
+  .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+  .filter(Boolean);

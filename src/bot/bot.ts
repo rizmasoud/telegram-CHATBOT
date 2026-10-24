@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Bot, session, InlineKeyboard } from 'grammy';
 import { conversations, createConversation } from '@grammyjs/conversations';
 import { BotContext } from './context';
@@ -33,12 +34,29 @@ import {
 import { inMemoryDb } from '../db';
 import { redisService } from '../services/redis';
 
+export function sanitizeBotToken(raw?: string): string {
+  if (!raw) return '';
+  return raw.trim().replace(/^["']|["']$/g, '').trim();
+}
+
+export function isValidTelegramToken(raw?: string): boolean {
+  const token = sanitizeBotToken(raw);
+  return Boolean(
+    token &&
+      !token.includes('ABCdefGhIJKlmNoPQRsTUVwxyZ') &&
+      /^\d+:[A-Za-z0-9_-]{20,}$/.test(token)
+  );
+}
+
 /**
  * Factory to create and configure the production grammY Bot
  */
 export function createMatchmakingBot(token?: string): Bot<BotContext> {
-  const botToken = token || process.env.TELEGRAM_BOT_TOKEN || '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ';
-  const bot = new Bot<BotContext>(botToken);
+  const resolvedToken =
+    sanitizeBotToken(token) ||
+    sanitizeBotToken(process.env.TELEGRAM_BOT_TOKEN) ||
+    '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ';
+  const bot = new Bot<BotContext>(resolvedToken);
 
   // 1. Session Middleware
   bot.use(
@@ -186,18 +204,44 @@ export function createMatchmakingBot(token?: string): Bot<BotContext> {
       await ctx.reply('⚠️ لطفاً ابتدا با /start در ربات عضو شوید.');
       return;
     }
+
+    const history = inMemoryDb.getUserChatHistory(user.id, 5);
+    if (history.length === 0) {
+      await ctx.reply(
+        `📜 <b>تاریخچه گفتگوهای پیشین شما</b>\n━━━━━━━━━━━━━━━━━━━━━\n` +
+          `شما هنوز هیچ گفتگوی ثبت‌شده‌ای ندارید.\n` +
+          `برای شروع اولین گفتگو روی دکمه زیر کلیک کنید:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: new InlineKeyboard().text('🔍 شروع جستجو (/search)', 'action:find_match'),
+        }
+      );
+      return;
+    }
+
+    const lines = history.map(({ partner }) => {
+      const stateLabel =
+        partner.status === 'in_chat'
+          ? 'مشغول گفتگو'
+          : partner.status === 'searching'
+          ? 'در صف جستجو'
+          : 'آزاد';
+      return `• کاربر <code>${partner.internal_id}</code> (${partner.name}) - وضعیت: ${stateLabel}`;
+    });
+
+    const kb = new InlineKeyboard();
+    for (const { partner } of history.slice(0, 2)) {
+      kb.text(`🔄 جستجوی هم‌صحبت (${partner.internal_id})`, 'action:find_match').row();
+    }
+    kb.text('🔍 جستجوی جدید (/search)', 'action:find_match');
+
     await ctx.reply(
       `📜 <b>تاریخچه گفتگوهای پیشین شما</b>\n━━━━━━━━━━━━━━━━━━━━━\n` +
-        `در این بخش می‌توانید هم‌صحبت‌های قبلی خود را مشاهده کرده و برای آن‌ها درخواست چت مجدد بفرستید.\n\n` +
-        `• کاربر <code>USER-1001</code> (سارا) - وضعیت: آنلاین\n` +
-        `• کاربر <code>USER-2002</code> (آرمان) - وضعیت: آفلاین\n\n` +
-        `جهت درخواست ارتباط مستقیم از دستور <code>/find_id</code> استفاده نمایید.`,
+        `${lines.join('\n')}\n\n` +
+        `جهت بررسی شناسه کاربری از دستور <code>/find_id USER-XXXX</code> استفاده نمایید.`,
       {
         parse_mode: 'HTML',
-        reply_markup: new InlineKeyboard()
-          .text('🔄 چت مجدد با USER-1001', 'action:find_match')
-          .row()
-          .text('🔍 جستجوی جدید', 'action:find_match'),
+        reply_markup: kb,
       }
     );
   });
@@ -482,64 +526,106 @@ export function createMatchmakingBot(token?: string): Bot<BotContext> {
   return bot;
 }
 
-export const botInstance = createMatchmakingBot();
+let currentBotToken =
+  sanitizeBotToken(process.env.TELEGRAM_BOT_TOKEN) || '123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ';
+export let botInstance: Bot<BotContext> = createMatchmakingBot(currentBotToken);
+
+let pollingActive = false;
+let shutdownHooksRegistered = false;
+
+export function isBotPollingActive(): boolean {
+  return pollingActive;
+}
 
 /**
  * Starts real Telegram Long Polling (bot.start())
- * Runs concurrently with the web server to listen for real Telegram messages & commands.
+ * Runs concurrently with the Express server without blocking HTTP traffic.
  */
-export async function startBotLongPolling(bot: Bot<BotContext> = botInstance) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const isConfigured = Boolean(
-    token &&
-    token.trim() !== '' &&
-    !token.includes('ABCdefGhIJKlmNoPQRsTUVwxyZ') &&
-    token.includes(':')
-  );
-
-  if (!isConfigured) {
-    console.log('[Telegram Bot] ℹ️ Live Telegram Token not provided or using default placeholder.');
-    console.log('[Telegram Bot] ℹ️ Set TELEGRAM_BOT_TOKEN="your_token" in .env to connect to live Telegram servers.');
+export async function startBotLongPolling(): Promise<void> {
+  if (pollingActive) {
+    console.log('[Telegram Bot] ℹ️ Long Polling is already running.');
     return;
   }
 
+  const token = sanitizeBotToken(process.env.TELEGRAM_BOT_TOKEN);
+
+  if (!isValidTelegramToken(token)) {
+    console.log(
+      '[Telegram Bot] ℹ️ Live Telegram Token not configured (or using placeholder in .env).'
+    );
+    console.log(
+      '[Telegram Bot] ℹ️ Set a valid TELEGRAM_BOT_TOKEN from @BotFather in .env to enable live Telegram Long Polling.'
+    );
+    return;
+  }
+
+  // Ensure botInstance uses the exact live token loaded from .env
+  if (token !== currentBotToken) {
+    currentBotToken = token;
+    botInstance = createMatchmakingBot(token);
+  }
+
+  const activeBot = botInstance;
+
   try {
-    console.log('[Telegram Bot] 🔄 Initializing real Telegram connection via Long Polling (bot.start())...');
+    console.log(
+      '[Telegram Bot] 🔄 Verifying TELEGRAM_BOT_TOKEN and preparing Long Polling (bot.start())...'
+    );
 
-    // 1. Remove any active webhook so Telegram allows getUpdates (Long Polling)
-    try {
-      await bot.api.deleteWebhook({ drop_pending_updates: false });
-    } catch (e: any) {
-      console.warn('[Telegram Bot] Notice during deleteWebhook check:', e?.message || e);
-    }
+    // 1. Verify token upfront to catch 401 Unauthorized cleanly without crashing Express
+    const botProfile = await activeBot.api.getMe();
+    console.log(
+      `[Telegram Bot] ✅ Authenticated with Telegram as @${botProfile.username} (ID: ${botProfile.id})`
+    );
 
-    // 2. Start grammY Long Polling concurrently
-    bot
+    // 2. Delete any active webhook to prevent 409 Conflict during getUpdates Long Polling
+    await activeBot.api.deleteWebhook({ drop_pending_updates: true });
+
+    pollingActive = true;
+
+    // 3. Start grammY Long Polling concurrently (do NOT await bot.start() so Express stays non-blocking)
+    activeBot
       .start({
+        drop_pending_updates: true,
+        allowed_updates: ['message', 'callback_query'],
         onStart: (botInfo) => {
           console.log('[Telegram Bot] ==============================================');
-          console.log(`[Telegram Bot] 🚀 Live Long Polling Started Successfully!`);
+          console.log('[Telegram Bot] 🚀 Live Long Polling Started Successfully!');
           console.log(`[Telegram Bot] 🤖 Bot Name: ${botInfo.first_name}`);
           console.log(`[Telegram Bot] 👤 Username: @${botInfo.username} (ID: ${botInfo.id})`);
-          console.log(`[Telegram Bot] 📡 Listening for incoming messages, commands & match requests!`);
+          console.log(
+            '[Telegram Bot] 📡 Listening for incoming messages, commands & match requests!'
+          );
           console.log('[Telegram Bot] ==============================================');
         },
-        drop_pending_updates: true,
       })
       .catch((err: any) => {
-        console.error('[Telegram Bot] ❌ Long Polling Error:', err?.message || err);
+        pollingActive = false;
+        console.error('[Telegram Bot] ❌ Long Polling stopped with error:', err?.message || err);
       });
 
-    // 3. Register graceful shutdown handlers
-    process.once('SIGINT', () => {
-      console.log('[Telegram Bot] Stopping polling loop (SIGINT)...');
-      bot.stop();
-    });
-    process.once('SIGTERM', () => {
-      console.log('[Telegram Bot] Stopping polling loop (SIGTERM)...');
-      bot.stop();
-    });
+    // 4. Register graceful shutdown handlers once
+    if (!shutdownHooksRegistered) {
+      shutdownHooksRegistered = true;
+      const stopGracefully = (signal: string) => {
+        if (pollingActive) {
+          console.log(`[Telegram Bot] Stopping polling loop (${signal})...`);
+          pollingActive = false;
+          activeBot.stop();
+        }
+      };
+      process.once('SIGINT', () => stopGracefully('SIGINT'));
+      process.once('SIGTERM', () => stopGracefully('SIGTERM'));
+    }
   } catch (err: any) {
-    console.error('[Telegram Bot] ❌ Failed to start Long Polling:', err?.message || err);
+    pollingActive = false;
+    const msg = err?.message || String(err);
+    if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+      console.error(
+        '[Telegram Bot] ❌ 401 Unauthorized: TELEGRAM_BOT_TOKEN in .env is invalid or revoked. Please get a fresh token from @BotFather.'
+      );
+    } else {
+      console.error('[Telegram Bot] ❌ Failed to initialize Long Polling:', msg);
+    }
   }
 }

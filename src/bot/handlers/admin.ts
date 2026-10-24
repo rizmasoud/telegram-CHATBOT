@@ -9,7 +9,12 @@ import { ADMIN_TELEGRAM_IDS } from '../../types';
  */
 export function isAdminUser(telegramId?: string | number): boolean {
   if (!telegramId) return false;
-  return ADMIN_TELEGRAM_IDS.includes(telegramId.toString());
+  const idStr = telegramId.toString().trim();
+  const dynamicEnvIds = (process.env.ADMIN_TELEGRAM_IDS || '')
+    .split(',')
+    .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean);
+  return ADMIN_TELEGRAM_IDS.includes(idStr) || dynamicEnvIds.includes(idStr);
 }
 
 /**
@@ -331,27 +336,25 @@ export async function handleAdminBannerBroadcast(ctx: BotContext) {
   const telegramId = ctx.from?.id?.toString() || '';
   if (!isAdminUser(telegramId)) return;
 
-  const bannerPhotoUrl =
-    'https://images.unsplash.com/photo-1579202673506-ca3ce28943ef?w=800&auto=format&fit=crop&q=80';
+  const bannerPhotoUrl = process.env.BROADCAST_BANNER_URL?.trim();
 
   const bannerCaption = [
     `🎉 <b>اطلاعیه ویژه ربات چت و همسان‌گزینی ناشناس</b> 👋`,
     `━━━━━━━━━━━━━━━━━━━━━`,
-    `✨ <b>امکانات و بروزرسانی‌های نسخه جدید:</b>`,
+    `✨ <b>امکانات و بروزرسانی‌های ربات:</b>`,
     `• 🛡️ <b>سیستم گزارش فوری تخلف:</b> چت ناسالم با زدن /report فوراً قطع و بررسی می‌شود.`,
-    `• ⚡ <b>افزایش سرعت صف جستجو:</b> اتصال بدون معطلی به هم‌صحبت‌های واقعی در سراسر ایران.`,
+    `• ⚡ <b>صف جستجوی سریع:</b> اتصال به هم‌صحبت‌های واقعی در سراسر ایران.`,
     `• 🎁 <b>سکه روزانه و پاداش دعوت:</b> با دستور /daily هر روز سکه رایگان دریافت کن!`,
     ``,
     `برای شروع جستجو یا مدیریت پروفایل از دکمه‌های زیر استفاده کنید:`,
   ].join('\n');
 
-  // Notify admin that processing has started
   if (ctx.callbackQuery) {
-    await ctx.answerCallbackQuery({ text: '⏳ در حال ارسال بنر همگانی به صف کاربران...' });
+    await ctx.answerCallbackQuery({ text: '⏳ در حال ارسال اطلاعیه همگانی به صف کاربران...' });
   }
 
   const result = await executeSafeChunkedBroadcast(ctx, {
-    type: 'photo',
+    type: bannerPhotoUrl ? 'photo' : 'text',
     photoUrl: bannerPhotoUrl,
     text: bannerCaption,
     parse_mode: 'HTML',
